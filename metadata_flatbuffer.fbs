@@ -1,7 +1,6 @@
 namespace BlorgMetaFlat;
 
 table DirectoryEntryMetadata {
-    name:string (required);
     size:uint64;
     created:uint64;
     modified:uint64;
