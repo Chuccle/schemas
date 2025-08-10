@@ -27,6 +27,3 @@ table Directory {
     subdirectories: [SubdirectoryMetadata];
     files: [FileEntryMetadata];
 }
-
-root_type DirectoryEntryMetadata;
-root_type Directory;
