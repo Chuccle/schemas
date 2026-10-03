@@ -56,4 +56,6 @@ A `gap` behaviour describes something known to be broken. It's written down so i
 .\conformance\Test-BlorgContract.ps1 -Server 10.0.50.17:8080 -ResultPath C:\results\contract.json
 ```
 
+`-ProbeDir` names the probe tree's directory under the served root (default `contract-probe`). Where the probe can't write to the served directory, serve a committed copy of what `-SeedOnly` writes; the change tests (B08, B11) then report as skipped. BlorgFS commits that copy as `tests/guest-suites/Contract.corpus/`.
+
 It needs only PowerShell (Windows PowerShell 5.1 or pwsh 7). The exit code is the number of failed checks.

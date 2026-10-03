@@ -16,11 +16,12 @@
     same script runs in server-rs CI on Linux (pwsh 7) and inside the Windows
     test guest (Windows PowerShell 5.1 or pwsh 7) against a deployed server.
 
-    It works against a probe tree, contract-probe\, under the server's
-    served root. With -SeedRoot (the served directory, reachable from where
-    this runs) it creates the tree itself and also runs the change tests
-    (B08); without it, seed first with -SeedOnly on a machine that can reach
-    the served directory.
+    It works against a probe tree, -ProbeDir (contract-probe\ by default),
+    under the server's served root. With -SeedRoot (the served directory,
+    reachable from where this runs) it creates the tree itself and also runs
+    the change tests (B08); without it, the tree has to be served already:
+    seed it with -SeedOnly on a machine that can reach the served directory,
+    or serve a committed copy of what -SeedOnly writes.
 
     Each check prints PASS, FAIL or INFO with its behaviour ID. Exit code is
     the number of failed checks, so 0 means conformant. Behaviours marked
@@ -31,6 +32,9 @@
 
 .PARAMETER SeedRoot
     The server's served directory. Enables seeding and the change tests.
+
+.PARAMETER ProbeDir
+    Name of the probe tree's directory directly under the served root.
 
 .PARAMETER SeedOnly
     Create the probe tree under -SeedRoot and exit.
@@ -49,6 +53,7 @@
 param(
     [Parameter(Mandatory)][string]$Server,
     [string]$SeedRoot,
+    [string]$ProbeDir = "contract-probe",
     [switch]$SeedOnly,
     [string]$ResultPath,
     [int]$TimeoutMs = 10000
@@ -57,7 +62,6 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2
 
-$ProbeDir = "contract-probe"
 $SmallSize = 1000
 # Above server-rs's default max_resident_file_bytes (8 MiB), so it is streamed
 # from disk rather than served from memory -- the two code paths B01 covers.
@@ -104,6 +108,8 @@ function Initialize-ProbeTree([string]$Root) {
     if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
     New-Item -ItemType Directory -Path $dir | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $dir "sub") | Out-Null
+    # So a committed copy of the tree keeps sub\ (git drops empty directories).
+    [System.IO.File]::WriteAllBytes((Join-Path $dir "sub\.gitkeep"), (New-Object byte[] 0))
     [System.IO.File]::WriteAllBytes((Join-Path $dir "small.bin"), (Get-PatternBytes $SmallSize 251))
     [System.IO.File]::WriteAllBytes((Join-Path $dir "large.bin"), (Get-PatternBytes $LargeSize 251))
     [System.IO.File]::WriteAllBytes((Join-Path $dir "shrink.bin"), (Get-PatternBytes $ShrinkFrom 251))
