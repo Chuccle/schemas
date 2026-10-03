@@ -1,0 +1,196 @@
+{
+  "$comment": "The server-rs <-> BlorgFS contract. This file is the single source of truth: tools/generate.py turns it into generated/ (C for the driver, Rust for the server) and fixtures/*.bin. Bump version.major for any change an already-deployed peer would misread; bump version.minor for additive changes. See README.md.",
+
+  "version": { "major": 1, "minor": 0 },
+
+  "schema": {
+    "file": "metadata_flatbuffer.fbs",
+    "namespace": "BlorgMetaFlat",
+    "timestamps": "Windows FILETIME: 100 ns ticks since 1601-01-01 UTC, as uint64."
+  },
+
+  "transport": {
+    "http_version": "HTTP/1.1",
+    "query_path_key": "path",
+    "path_encoding": "Percent-encoded UTF-8. Every byte outside A-Z a-z 0-9 - . _ ~ is escaped as %XX with upper-case hex.",
+    "max_body_bytes": 67108864,
+    "max_header_bytes": 65536
+  },
+
+  "routes": [
+    {
+      "id": "DIR_INFO",
+      "method": "GET",
+      "path": "/get_dir_info",
+      "success_status": 200,
+      "body": "BlorgMetaFlat.Directory"
+    },
+    {
+      "id": "DIR_ENTRY_INFO",
+      "method": "GET",
+      "path": "/get_dir_entry_info",
+      "success_status": 200,
+      "body": "BlorgMetaFlat.DirectoryEntryMetadata"
+    },
+    {
+      "id": "FILE",
+      "method": "GET",
+      "path": "/get_file",
+      "success_status": 206,
+      "body": "raw bytes of the requested inclusive Range"
+    },
+    {
+      "id": "HEALTHCHECK",
+      "method": "GET",
+      "path": "/healthcheck",
+      "success_status": 200,
+      "body": "empty"
+    }
+  ],
+
+  "error_statuses": [
+    { "id": "BAD_REQUEST",           "status": 400, "meaning": "No path= query parameter, or it is not valid UTF-8 once decoded." },
+    { "id": "FORBIDDEN",             "status": 403, "meaning": "Permission denied on the host, or the path escapes the served root." },
+    { "id": "NOT_FOUND",             "status": 404, "meaning": "The path does not exist, or a non-final component is not a directory." },
+    { "id": "RANGE_NOT_SATISFIABLE", "status": 416, "meaning": "The Range starts at or past the file's current size." },
+    { "id": "INTERNAL",              "status": 500, "meaning": "Anything else." }
+  ],
+
+  "behaviours": [
+    {
+      "id": "B01",
+      "title": "Ranged reads answer 206 with exactly the requested length",
+      "statement": "GET /get_file with a single `Range: bytes=a-b` where a <= b < size is answered 206 with Content-Length b-a+1 and exactly those bytes, whether the server holds the file resident or streams it from disk. The driver only ever asks for ranges inside the size it last saw, and rejects any other status or length.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS", "guest"]
+    },
+    {
+      "id": "B02",
+      "title": "Every response is Content-Length framed",
+      "statement": "Every response, success or error, carries exactly one Content-Length header and no Transfer-Encoding. The driver has no chunked decoder and fails a response without Content-Length.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS", "guest"]
+    },
+    {
+      "id": "B03",
+      "title": "Connections stay open between requests",
+      "statement": "After a complete response to an HTTP/1.1 request carrying `Connection: keep-alive`, the server leaves the connection open for the next request. The driver pools connections and retries a request once if a pooled connection turns out to have been closed while idle; it does not tolerate a close mid-response.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS", "guest"]
+    },
+    {
+      "id": "B04",
+      "title": "Errors are reported by status code alone",
+      "statement": "Failures use the codes in error_statuses with an empty body, and nothing else. The driver maps 404 to STATUS_OBJECT_NAME_NOT_FOUND, 403 to STATUS_ACCESS_DENIED, 416 to STATUS_END_OF_FILE and anything else unexpected to STATUS_INVALID_PARAMETER.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS", "guest"]
+    },
+    {
+      "id": "B05",
+      "title": "Windows paths are accepted as sent",
+      "statement": "The driver sends the caller's path as Windows hands it over: a leading backslash, backslash separators, the caller's casing, percent-encoded per transport.path_encoding. The server treats `\\` and `/` alike, treats `\\` (or `/`, or empty) as the served root, and rejects with 403 any `..` that escapes the root and, on a Windows host, any `:` (a drive or stream qualifier).",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS", "guest"]
+    },
+    {
+      "id": "B06",
+      "title": "Listings are well formed",
+      "statement": "A Directory always carries both vectors (possibly empty). Every name is non-empty, contains no separator, and fits in 259 UTF-16 code units; a name that does not fit makes the driver reject the whole listing. Within one listing names are unique and no name is both a file and a subdirectory. Entries are in byte-wise name order; the driver does not rely on the order but tests do.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS"]
+    },
+    {
+      "id": "B07",
+      "title": "Metadata decodes identically on both sides",
+      "statement": "Every field the server writes is the field the driver reads: the golden fixtures in fixtures/ decode to the same values through the server's flatbuffers crate and the driver's flatcc reader, and the server's own encoder round-trips them.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "BlorgFS"]
+    },
+    {
+      "id": "B08",
+      "title": "Metadata and content agree",
+      "statement": "The size reported by /get_dir_info and /get_dir_entry_info is the number of bytes /get_file serves at the same moment. After a file changes on the host, the server's cached metadata and content are invalidated together within the filesystem watcher's debounce window (2 s). The driver caches size and trims reads to it, so a file that shrinks underneath it yields 416, which the driver reports as STATUS_END_OF_FILE.",
+      "status": "enforced",
+      "checked_by": ["server-rs", "guest"]
+    },
+    {
+      "id": "B09",
+      "title": "Name matching is case-insensitive end to end",
+      "statement": "The driver matches names case-insensitively (Windows semantics) and sends the caller's casing to the server. On a case-sensitive host (Linux, the shipped server build) a file opened with different casing than on disk is found in the cached listing but its /get_file request returns 404, and two names differing only in case are indistinguishable to the driver. KNOWN GAP: neither side handles this yet; the guest probe reports it rather than failing.",
+      "status": "gap",
+      "checked_by": ["guest"]
+    },
+    {
+      "id": "B10",
+      "title": "Timestamps are FILETIME and always present",
+      "statement": "created, modified and accessed are FILETIME ticks (schema.timestamps). When the host cannot report one (created on most Linux filesystems) the server substitutes the time of the scan rather than 0, so Explorer never shows 1601.",
+      "status": "enforced",
+      "checked_by": ["server-rs"]
+    },
+    {
+      "id": "B11",
+      "title": "A read that straddles a shrunk EOF fails instead of coming back short",
+      "statement": "When a file shrinks after the driver cached its size, a Range that starts before the new EOF but ends after it is answered 206 with only the bytes up to EOF and a matching Content-Length (RFC 9110 behaviour, observed on both the resident and streamed paths). The driver requires Content-Length to equal the length it asked for, so it fails the read with STATUS_INVALID_PARAMETER rather than returning a short read. KNOWN GAP: the fix is in the driver (accept a shorter 206 whose Content-Range total shows the new size, and update the cached size); the guest probe reports what the server does rather than failing.",
+      "status": "gap",
+      "checked_by": ["guest"]
+    }
+  ],
+
+  "requests": [
+    {
+      "id": "DIR_INFO_ROOT",
+      "route": "DIR_INFO",
+      "path": "\\",
+      "host": "sandbox.blorg.lan",
+      "wire": "GET /get_dir_info?path=%5C HTTP/1.1\r\nHost: sandbox.blorg.lan\r\nConnection: keep-alive\r\n\r\n"
+    },
+    {
+      "id": "DIR_ENTRY_INFO_NON_ASCII",
+      "route": "DIR_ENTRY_INFO",
+      "path": "\\a b\\été.bin",
+      "host": "sandbox.blorg.lan",
+      "wire": "GET /get_dir_entry_info?path=%5Ca%20b%5C%C3%A9t%C3%A9.bin HTTP/1.1\r\nHost: sandbox.blorg.lan\r\nConnection: keep-alive\r\n\r\n"
+    },
+    {
+      "id": "FILE_RANGE",
+      "route": "FILE",
+      "path": "\\media\\file.bin",
+      "host": "sandbox.blorg.lan",
+      "range": [100, 103],
+      "wire": "GET /get_file?path=%5Cmedia%5Cfile.bin HTTP/1.1\r\nHost: sandbox.blorg.lan\r\nConnection: keep-alive\r\nRange: bytes=100-103\r\n\r\n"
+    }
+  ],
+
+  "fixtures": [
+    {
+      "id": "LISTING",
+      "root_type": "BlorgMetaFlat.Directory",
+      "data": {
+        "subdirectories": [
+          { "name": "Docs", "created": 133485408000000000, "modified": 133485408010000000, "accessed": 133485408020000000 },
+          { "name": "été", "created": 1, "modified": 2, "accessed": 3 }
+        ],
+        "files": [
+          { "name": "a b.txt", "size": 0, "created": 133485408000000000, "modified": 133485408000000001, "accessed": 133485408000000002 },
+          { "name": "huge.bin", "size": 18446744073709551615, "created": 18446744073709551615, "modified": 18446744073709551614, "accessed": 18446744073709551613 },
+          { "name": "😀.md", "size": 4096, "created": 116444736000000000, "modified": 116444736000000000, "accessed": 116444736000000000 }
+        ]
+      }
+    },
+    {
+      "id": "LISTING_EMPTY",
+      "root_type": "BlorgMetaFlat.Directory",
+      "data": { "subdirectories": [], "files": [] }
+    },
+    {
+      "id": "ENTRY_FILE",
+      "root_type": "BlorgMetaFlat.DirectoryEntryMetadata",
+      "data": { "size": 1234567890123, "created": 133485408000000000, "modified": 133485408010000000, "accessed": 133485408020000000, "directory": false }
+    },
+    {
+      "id": "ENTRY_DIRECTORY",
+      "root_type": "BlorgMetaFlat.DirectoryEntryMetadata",
+      "data": { "size": 4096, "created": 7, "modified": 8, "accessed": 9, "directory": true }
+    }
+  ]
+}

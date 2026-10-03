@@ -1,0 +1,68 @@
+name: Contract
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  # Must match FLATC_VERSION in tools/generate.py and the flatbuffers crate
+  # server-rs builds with.
+  FLATC_TAG: v25.12.19
+
+jobs:
+  generated:
+    name: Generated files match contract.json
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Cache flatc
+      id: cache_flatc
+      uses: actions/cache@v5
+      with:
+        path: ~/flatc
+        key: ${{ runner.os }}-flatc-${{ env.FLATC_TAG }}
+
+    - name: Build flatc
+      if: steps.cache_flatc.outputs.cache-hit != 'true'
+      run: |
+        git clone --depth 1 --branch "$FLATC_TAG" https://github.com/google/flatbuffers.git "$RUNNER_TEMP/flatbuffers"
+        cmake -S "$RUNNER_TEMP/flatbuffers" -B "$RUNNER_TEMP/flatc-build" -DCMAKE_BUILD_TYPE=Release \
+          -DFLATBUFFERS_BUILD_TESTS=OFF -DFLATBUFFERS_BUILD_FLATLIB=OFF -DFLATBUFFERS_BUILD_FLATHASH=OFF
+        cmake --build "$RUNNER_TEMP/flatc-build" --target flatc -j
+        mkdir -p ~/flatc && cp "$RUNNER_TEMP/flatc-build/flatc" ~/flatc/
+
+    # Regenerates fixtures/ and generated/ from contract.json and fails if
+    # anything committed differs, so a hand edit to a generated file, or a
+    # contract change without regenerating, cannot land.
+    - name: Check generated files are current
+      run: FLATC=~/flatc/flatc python3 tools/generate.py --check
+
+  traceability:
+    name: Guest probe covers its behaviours
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - run: python3 tools/check_traceability.py --checker guest --root conformance
+
+  probe-syntax:
+    name: Conformance probe parses on Windows PowerShell
+    # The probe runs inside the Windows test guest, which may only have
+    # Windows PowerShell 5.1; parse it there so a pwsh-7-only construct fails
+    # here rather than in the guest.
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Parse with Windows PowerShell 5.1
+      shell: powershell
+      run: |
+        $errors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path conformance\Test-BlorgContract.ps1), [ref]$null, [ref]$errors)
+        if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
+        Write-Host "Parsed under PowerShell $($PSVersionTable.PSVersion)"
