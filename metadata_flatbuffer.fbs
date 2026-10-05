@@ -26,6 +26,16 @@ table SubdirectoryMetadata {
 table Directory {
     subdirectories: [SubdirectoryMetadata];
     files: [FileEntryMetadata];
+    descendants: [Descendant];
+}
+
+// The listing of subdirectory `subdirectory` of listing `parent`, where 0 is
+// the directory asked for and k is descendants[k - 1]. Breadth first, so a
+// parent always comes before its children.
+table Descendant {
+    parent:uint32;
+    subdirectory:uint32;
+    listing:Directory;
 }
 
 table ChangeBatch {
