@@ -9,6 +9,12 @@ table DirectoryEntryMetadata {
     // The entry's own security descriptor, self-relative, when one is
     // stored; absent when it inherits from the directory it is in.
     security:[ubyte];
+    // When it inherits: the descriptor of the nearest directory above it
+    // that has one stored, and how many levels up that directory is. Absent
+    // when none does, in which case it inherits from the client's default
+    // for the root.
+    inherited:[ubyte];
+    inherited_depth:uint32;
 }
 
 table FileEntryMetadata {
@@ -41,6 +47,12 @@ table Directory {
     files: [FileEntryMetadata];
     descendants: [Descendant];
     security: [Security];
+    // What the listed directory itself resolves to: its own descriptor at
+    // depth 0, or the nearest stored one above it and how many levels up.
+    // Absent when none is stored up to the root. An entry with security 0
+    // inherits from this, one level further down.
+    inherited:[ubyte];
+    inherited_depth:uint32;
 }
 
 // The listing of subdirectory `subdirectory` of listing `parent`, where 0 is
