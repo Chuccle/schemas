@@ -6,6 +6,9 @@ table DirectoryEntryMetadata {
     modified:uint64;
     accessed:uint64;
     directory:bool;
+    // The entry's own security descriptor, self-relative, when one is
+    // stored; absent when it inherits from the directory it is in.
+    security:[ubyte];
 }
 
 table FileEntryMetadata {
@@ -14,6 +17,8 @@ table FileEntryMetadata {
     created:uint64;
     modified:uint64;
     accessed:uint64;
+    // k is the listing's security[k - 1]; 0, the default, inherits.
+    security:uint32;
 }
 
 table SubdirectoryMetadata {
@@ -21,12 +26,21 @@ table SubdirectoryMetadata {
     created:uint64;
     modified:uint64;
     accessed:uint64;
+    // As FileEntryMetadata.security.
+    security:uint32;
+}
+
+// A self-relative security descriptor, stored once per listing however many
+// entries carry it.
+table Security {
+    descriptor:[ubyte];
 }
 
 table Directory {
     subdirectories: [SubdirectoryMetadata];
     files: [FileEntryMetadata];
     descendants: [Descendant];
+    security: [Security];
 }
 
 // The listing of subdirectory `subdirectory` of listing `parent`, where 0 is
