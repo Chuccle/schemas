@@ -27,3 +27,12 @@ table Directory {
     subdirectories: [SubdirectoryMetadata];
     files: [FileEntryMetadata];
 }
+
+table ChangeBatch {
+    epoch:uint64;
+    generation:uint64;
+    reset:bool;
+    modified:[string];
+    created:[string];
+    removed:[string];
+}
